@@ -557,6 +557,7 @@ section GradedRing
 
 /-- Cast for modular forms, which is useful for avoiding `Heq`s. Optionally transports along
 an equality of subgroups. -/
+@[simps -fullyApplied coe]
 def mcast {a b : ℤ} {Γ Γ' : Subgroup (GL (Fin 2) ℝ)} (h : a = b) (f : ModularForm Γ a)
     (hΓ : Γ' = Γ := by rfl) : ModularForm Γ' b where
   toFun := (f : ℍ → ℂ)
