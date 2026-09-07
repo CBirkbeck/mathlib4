@@ -5,6 +5,7 @@ Authors: David Loeffler
 -/
 module
 
+import Mathlib.Analysis.Fourier.AddCircle
 public import Mathlib.NumberTheory.Modular
 public import Mathlib.NumberTheory.ModularForms.Petersson
 
@@ -18,6 +19,8 @@ bounds for its q-expansion coefficients. The main results are
   is bounded by a constant multiple of `max 1 (1 / (im τ) ^ k))`.
 * `CuspFormClass.exists_bound`: a cusp form of weight `k` (for an arithmetic subgroup `Γ`)
   is bounded by a constant multiple of `1 / (im τ) ^ (k / 2)`.
+* `CuspFormClass.exists_sum_range_norm_sq_qExpansion_coeff_le`: the sum of the squared norms of
+  the first `M` q-expansion coefficients of a cusp form is `O(M ^ k)`.
 * `ModularFormClass.qExpansion_isBigO`: for a a modular form of weight `k` (for an arithmetic
   subgroup `Γ`), the `n`-th q-expansion coefficient is `O(n ^ k)`.
 * `CuspFormClass.qExpansion_isBigO`: **Hecke's bound** for a a cusp form of weight `k` (for
@@ -28,15 +31,13 @@ public section
 
 open Filter Asymptotics Matrix.SpecialLinearGroup Matrix.GeneralLinearGroup
 
-open scoped Topology
-
 open UpperHalfPlane hiding I
 
-open Matrix hiding mul_smul
-
-open scoped Modular MatrixGroups ComplexConjugate ModularForm
+open scoped Matrix Modular MatrixGroups ComplexConjugate ModularForm Manifold Topology Real
 
 variable {E : Type*} [SeminormedAddCommGroup E]
+
+local notation "𝕢" => Function.Periodic.qParam
 
 namespace ModularGroup
 
@@ -221,6 +222,111 @@ lemma CuspFormClass.exists_bound {k : ℤ} {Γ : Subgroup (GL (Fin 2) ℝ)} [Γ.
   rw [petersson, ← Real.rpow_mul_natCast τ.im_pos.le]
   simp [abs_of_pos τ.im_pos, field]
 
+private lemma memLp_two_restrict_Ioc_of_continuous {g : ℝ → ℂ} (hg : Continuous g) (a b : ℝ) :
+    MeasureTheory.MemLp g 2 (MeasureTheory.volume.restrict (Set.Ioc a b)) := by
+  rw [MeasureTheory.memLp_two_iff_integrable_sq_norm (by fun_prop)]
+  exact Continuous.integrableOn_Ioc (by fun_prop)
+
+/--
+Bound for the sum of the squared norms of the first `M` `q`-expansion coefficients with an
+exponentially-decaying weight term, in terms of the integral of `‖f‖ ^ 2` along a horizontal
+line.
+
+(This is the result of applying Bessel's inequality for Fourier series to the periodic function
+`f (· + I * y)`.)
+-/
+lemma sum_range_norm_sq_qExpansion_coeff_mul_exp_le {f : ℍ → ℂ} {h : ℝ} (hh : 0 < h)
+    (hfper : Function.Periodic (f ∘ ofComplex) h) (hfhol : MDiff f)
+    (hfbdd : IsBoundedAtImInfty f) {y : ℝ} (hy : 0 < y) (M : ℕ) :
+    ∑ n ∈ Finset.range M,
+        ‖(qExpansion h f).coeff n‖ ^ 2 * Real.exp (-(4 * π * n * y / h)) ≤
+      h⁻¹ * ∫ x in 0..h,
+        ‖f ⟨x + y * UpperHalfPlane.I, by simpa using hy⟩‖ ^ 2 := by
+  let g : ℝ → ℂ := fun x ↦ f ⟨x + y * UpperHalfPlane.I, by simpa using hy⟩
+  have hg : Continuous g := by fun_prop
+  have hP := hasSum_sq_fourierCoeffOn hh (memLp_two_restrict_Ioc_of_continuous hg 0 h)
+  simp only [sub_zero, smul_eq_mul] at hP
+  have hterm (n : ℕ) : ‖(qExpansion h f).coeff n‖ ^ 2 * Real.exp (-(4 * π * n * y / h)) =
+      ‖fourierCoeffOn hh g n‖ ^ 2 := by
+    have h1 : Real.exp (2 * π * n * y / h) ^ 2 * Real.exp (-(4 * π * n * y / h)) = 1 := by
+      rw [← Real.exp_nat_mul, ← Real.exp_add, ← Real.exp_zero]
+      congr 1
+      push_cast
+      ring
+    rw [qExpansion_coeff_eq_exp_mul_fourierCoeffOn hh hfper hfhol hfbdd hy n, norm_mul,
+      Complex.norm_real, Real.norm_of_nonneg (Real.exp_pos _).le, mul_pow]
+    linear_combination ‖fourierCoeffOn hh g n‖ ^ 2 * h1
+  rw [Finset.sum_congr rfl fun n _ ↦ hterm n,
+    ← Finset.sum_image (f := fun i : ℤ ↦ ‖fourierCoeffOn hh g i‖ ^ 2)
+      (Nat.cast_injective.injOn (s := (Finset.range M : Set ℕ)))]
+  exact sum_le_hasSum _ (fun i _ ↦ by positivity) hP
+
+/--
+Bound for the unweighted sum of the squared norms of the first `M` `q`-expansion coefficients, in
+terms of the integral of `‖f‖ ^ 2` along a horizontal line.
+-/
+lemma sum_range_norm_sq_qExpansion_coeff_le {f : ℍ → ℂ} {h : ℝ} (hh : 0 < h)
+    (hfper : Function.Periodic (f ∘ ofComplex) h) (hfhol : MDiff f)
+    (hfbdd : IsBoundedAtImInfty f) {y : ℝ} (hy : 0 < y) (M : ℕ) :
+    ∑ n ∈ Finset.range M, ‖(qExpansion h f).coeff n‖ ^ 2 ≤
+      Real.exp (4 * π * M * y / h) * (h⁻¹ * ∫ x in 0..h,
+          ‖f ⟨x + y * UpperHalfPlane.I, by simpa using hy⟩‖ ^ 2) := by
+  -- reduce to term-wise inequality
+  suffices ∀ (n : ℕ) (hn : n ∈ Finset.range M),
+      ‖(qExpansion h f).coeff n‖ ^ 2 ≤ Real.exp (4 * π * M * y / h) *
+        (‖(qExpansion h f).coeff n‖ ^ 2 * Real.exp (-(4 * π * n * y / h))) by
+    grw [Finset.sum_le_sum this, ← Finset.mul_sum, mul_le_mul_iff_right₀ (by positivity)]
+    exact sum_range_norm_sq_qExpansion_coeff_mul_exp_le hh hfper hfhol hfbdd hy M
+  intro n hn
+  rw [mul_left_comm]
+  apply le_mul_of_one_le_right (by positivity)
+  rw [Real.exp_neg, ← div_eq_mul_inv, one_le_div₀ (Real.exp_pos _), Real.exp_le_exp]
+  simp_rw [mul_div_assoc, mul_right_comm]
+  exact mul_le_mul_of_nonneg_left (mod_cast (Finset.mem_range.mp hn).le) <| by positivity
+
+/-- **Mean-square bound** for q-expansion coefficients of a cusp form: the sum of the squared
+norms of the first `M` coefficients is bounded by a constant multiple of `M ^ k`. -/
+lemma CuspFormClass.exists_sum_range_norm_sq_qExpansion_coeff_le
+    {k : ℕ} {Γ : Subgroup (GL (Fin 2) ℝ)} [Γ.IsArithmetic]
+    {F : Type*} [FunLike F ℍ ℂ] [CuspFormClass F Γ (k : ℤ)] (f : F) :
+    ∃ C, ∀ M, ∑ n ∈ .range M, ‖(qExpansion Γ.strictWidthInfty f).coeff n‖ ^ 2 ≤ C * M ^ k := by
+  -- Work with the natural period at infinity, which is positive for an arithmetic subgroup.
+  let h := Γ.strictWidthInfty
+  have hh : 0 < h := Γ.strictWidthInfty_pos
+  have hfhol : MDiff f := ModularFormClass.holo f
+  -- Squaring Hecke's bound gives a uniform bound for `‖f τ‖² * (im τ) ^ k`.
+  obtain ⟨B, hB⟩ := CuspFormClass.exists_bound f
+  have hC (τ : ℍ) : ‖f τ‖ ^ 2 * τ.im ^ k ≤ B ^ 2 := by
+    have h1 : ‖f τ‖ ^ 2 ≤ (B / τ.im ^ (((k : ℤ) : ℝ) / 2)) ^ 2 :=
+      pow_le_pow_left₀ (norm_nonneg _) (hB τ) 2
+    have h2 : (τ.im ^ (((k : ℤ) : ℝ) / 2)) ^ 2 = τ.im ^ k := by
+      rw [← Real.rpow_natCast, ← Real.rpow_mul τ.im_pos.le, ← Real.rpow_natCast,
+        Nat.cast_two, Int.cast_natCast, div_mul_cancel₀ _ two_ne_zero]
+    rwa [div_pow, h2, le_div_iff₀ (by positivity)] at h1
+  refine ⟨Real.exp (4 * π / h) * B ^ 2, fun M ↦ ?_⟩
+  -- The empty partial sum is immediate, so assume from now on that `M` is positive.
+  rcases M.eq_zero_or_pos with rfl | hM
+  · simp only [Finset.range_zero, Finset.sum_empty]
+    positivity
+  -- On the horizontal line of height `1 / M`, Hecke's bound is at most `B² * M ^ k`.
+  have hy : (0 : ℝ) < 1 / M := by positivity
+  have key (τ : ℍ) (hτ : τ.im = 1 / M) : ‖f τ‖ ^ 2 ≤ B ^ 2 * M ^ k := by
+    have h := hC τ
+    rwa [hτ, one_div_pow, mul_one_div, div_le_iff₀ (by positivity)] at h
+  -- Integrating this over a period gives a bound for the integral of `‖f‖ ^ 2`
+  have hint₀ : ∫ x in 0..h, ‖f ⟨x + (1 / M : ℝ) * UpperHalfPlane.I, by simpa using hy⟩‖ ^ 2 ≤
+      ∫ x in 0..h, B ^ 2 * M ^ k :=
+    intervalIntegral.integral_mono_on hh.le (Continuous.intervalIntegrable (by fun_prop) 0 h)
+      intervalIntegrable_const fun x _ ↦ key _ (by simp)
+  -- The result follows by comining this bound with the Bessel estimate for the norm square of the
+  -- `q`-expansion coefficients in terms of the integral
+  have hfbdd : IsBoundedAtImInfty f := ModularFormClass.bdd_at_infty f
+  have hfper : Function.Periodic (f ∘ ofComplex) h :=
+    SlashInvariantFormClass.periodic_comp_ofComplex f Γ.strictWidthInfty_mem_strictPeriods
+  grw [sum_range_norm_sq_qExpansion_coeff_le hh hfper hfhol hfbdd hy M, hint₀,
+    show 4 * π * M * (1 / M) / h = 4 * π / h by field_simp]
+  simp [field]
+
 open Real in
 /-- A weight `k` modular form is bounded in norm by a constant multiple of
 `max 1 (1 / (τ.im) ^ k)`. -/
@@ -246,8 +352,6 @@ lemma ModularFormClass.exists_bound {k : ℤ} (hk : 0 ≤ k) {Γ : Subgroup (GL 
   rw [(pow_left_mono k).map_max, (pow_left_mono 2).map_max, ← max_div_div_right (by positivity)]
   congr <;> simp [field, ht.ne']
 
-local notation "𝕢" => Function.Periodic.qParam
-
 open Complex ModularFormClass
 
 /-- General result on bounding q-expansion coefficients using a bound on the norm of the function.
@@ -264,7 +368,7 @@ lemma qExpansion_coeff_isBigO_of_norm_isBigO {k : ℤ} {Γ : Subgroup (GL (Fin 2
   obtain ⟨C, Cpos, hC⟩ := hF.exists_pos
   rw [isBigO_iff]
   rw [IsBigOWith, eventually_comap] at hC
-  use (1 / Real.exp (-2 * Real.pi / ↑h)) * C
+  use (1 / Real.exp (-2 * π / h)) * C
   filter_upwards [eventually_gt_atTop 0,
     (tendsto_inv_atTop_zero.comp tendsto_natCast_atTop_atTop).eventually hC] with n hn hn'
   rw [ModularFormClass.qExpansion_coeff_eq_intervalIntegral (t := 1 / n) f hh hΓ _ (by positivity),
@@ -274,7 +378,7 @@ lemma qExpansion_coeff_isBigO_of_norm_isBigO {k : ℤ} {Γ : Subgroup (GL (Fin 2
   let F (x : ℝ) : ℝ := ‖1 / ↑h * (1 / 𝕢 h ((x : ℂ) + 1 / n * I) ^ n
       * f ⟨(x : ℂ) + 1 / n * Complex.I, by simp [hn]⟩)‖
   have hne : ‖(n : ℝ) ^ e‖ = n ^ e := Real.norm_of_nonneg (by positivity)
-  have (x : ℝ) : F x ≤ 1 / h * (1 / Real.exp (-2 * Real.pi / ↑h)) * (C * n ^ e) := by
+  have (x : ℝ) : F x ≤ 1 / h * (1 / Real.exp (-2 * π / h)) * (C * n ^ e) := by
     simp only [F, norm_mul, norm_div, norm_real, norm_one, norm_pow, mul_assoc]
     rw [Real.norm_of_nonneg hh.le, Function.Periodic.norm_qParam, ← Real.exp_nat_mul]
     gcongr
